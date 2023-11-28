@@ -21,7 +21,8 @@ typedef enum {
     SetTime,
     DisplayCurrentTime,
     StopwatchRunning,
-    StopwatchPaused
+    StopwatchPaused,
+    TimeisSet
 } State;
 
 // Class definition for Potentiometer
@@ -108,35 +109,39 @@ public:
     int getSeconds() const { return seconds; }
 };
 
-class LED {                                 // RGB LED class                                    
-private:
-    DigitalOut red, green, blue;                                                            
-    char state;
+class LED {
+protected:
+    DigitalOut outputSignal;
+    bool status;
+
 public:
-    LED(PinName r, PinName g, PinName b) : red(r), green(g), blue(b){  
-        Off();                                                  
-    }                                                                  
-
-    void Green(int g){
-        red = g;                                    // active low so on = 0, hence why !g
-        green = !g;                    
-        blue = g;
+    LED(PinName pin) : outputSignal(pin), status(false) {
+        off(); // Initialize the LED in off state
     }
 
-    void Blue(int b){
-        red = b;
-        green = b;
-        blue = !b;
+    void on(void) {
+        outputSignal = 0; // Assuming active-low LED
+        status = true;
     }
 
-    void Off(void) {                      
-        red = 1;                            
-        green = 1;                          
-        blue = 1;                          
-        state = 0;                          
+    void off(void) {
+        outputSignal = 1; // Assuming active-low LED
+        status = false;
     }
 
+    void toggle(void) {
+        if (status) {
+            off();
+        } else {
+            on();
+        }
+    }
+
+    bool getStatus(void) {
+        return status;
+    }
 };
+
 
 class Speaker { 
     private:
@@ -173,7 +178,12 @@ int prevSetMinutes = -1;  // Initialize to an invalid value
 SamplingPotentiometer pot1(A0, 23.0f, 10.0f);
 SamplingPotentiometer pot2(A1, 60.0f, 10.0f);
 Clock myClock;
-LED led(D5, D9, D8); 
+// Define the blue LED
+LED blueLED(D8);
+// Define the green LED
+LED greenLED(D9);
+//Define the red LED
+LED redLED(D5);
 Speaker mySpeaker(D6);
 
 Timer stopwatchTimer;
@@ -188,45 +198,57 @@ void resetStopwatch() {
     stopwatchSeconds = 0;
 }
 
-void updateLEDs() {
-    if (current_state == StopwatchRunning) {
-        // Turn on LED to indicate running
-        led.Blue(1);
-    } else {
-        // Turn off LED to indicate paused
-        led.Off();
-    }
-}
-
 
 // Interrupt handlers
 void onUp() {
-    // Move to the next state
-    current_state = static_cast<State>((current_state + 1) % NUM_STATES);
-    entered_state = true; // Reset the entered_state flag
+
+  if (current_state == StopwatchRunning) {
+    current_state = StopwatchPaused; 
+  }
+  else if (current_state == StopwatchPaused) {
+    current_state = SetTime;
+  }
+  else {
+    // Cycle normally 
+    current_state = static_cast<State>((current_state + 1) % NUM_STATES); 
+  }
+
+  entered_state = true;
+
 }
 
 void onDown() {
-    // Move to the previous state
+
+  if (current_state == StopwatchRunning) { 
+    current_state = StopwatchPaused;
+  }
+  else if (current_state == StopwatchPaused) {
+    current_state = SetTime; 
+  }
+  else {
+     // Cycle normally
     current_state = static_cast<State>((current_state + NUM_STATES - 1) % NUM_STATES);
-    entered_state = true; // Reset the entered_state flag
+  }
+
+  entered_state = true;
+
 }
 
 
-// Handler for fire button press
+
 void onFire() {
     if (current_state == SetTime) {
         myClock.setTime(setHours, setMinutes, 0);  // Initialize clock with the set time
         current_state = DisplayCurrentTime;
-    }
-    if (current_state == StopwatchRunning) {
+    } else if (current_state == StopwatchRunning) {
         stopwatchTimer.stop();
         current_state = StopwatchPaused;
     } else if (current_state == StopwatchPaused) {
         stopwatchTimer.start();
         current_state = StopwatchRunning;
+    }
 }
-}
+
 
 void tick(){
     myClock.tick();
@@ -241,6 +263,11 @@ int main() {
     pot2.startSampling();
     pc.printf("Serial is working\n");
     clockTimer.attach(&tick, 1.0);
+
+    //Make sure leds are off
+    blueLED.off();
+    greenLED.off();
+    redLED.off();
 
     while (true) {
         // State machine logic
@@ -289,32 +316,31 @@ int main() {
                 if (entered_state) {
                     lcd.cls();
                     lcd.locate(20, 10);
-                    lcd.printf("Stopwatch Running");
-                    stopwatchTimer.start();
+                    lcd.printf("Stopwatch Running\nTime: ");
                     entered_state = false;
+                    stopwatchTimer.start();
                 }
                 updateStopwatch();
                 // Display stopwatch time
                 lcd.locate(20, 20);
                 lcd.printf("%02d s", stopwatchSeconds);
+                blueLED.on();
                 break;
 
             case StopwatchPaused:
-            pc.printf("StopwatchPaused\n");
+                pc.printf("StopwatchPaused\n");
                 if (entered_state) {
                     lcd.cls();
                     lcd.locate(20, 10);
-                    lcd.printf("Stopwatch Paused");
+                    lcd.printf("Stopwatch Inactive\nLast Time: %02d s", stopwatchSeconds);
                     entered_state = false;
                 }
-                // Display current stopwatch time
-                lcd.locate(20, 20);
-                lcd.printf("%02d s", stopwatchSeconds);
-                updateLEDs();
+                blueLED.off();
                 break;
+
 
         }
 
-        wait_ms(100); // Wait for 100 milliseconds
+        wait_ms(150); // Debounce
     }
 }
